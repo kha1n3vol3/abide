@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { addedLines, boundState, editsFromPostToolUse, unifiedDiff } from "../src/lib/diff.js";
+import path from "node:path";
+import {
+  addedLines,
+  boundState,
+  editsFromPostToolUse,
+  removedByPatch,
+  unifiedDiff,
+} from "../src/lib/diff.js";
 import { splitDiff } from "../src/lib/git.js";
 
-const base = { session_id: "s", cwd: "/r", hook_event_name: "PostToolUse" as const };
+const base = { session_id: "s", cwd: path.resolve("r"), hook_event_name: "PostToolUse" as const };
 
 describe("hunks from hook payloads", () => {
   it("prefers the host's structured patch for an Edit", () => {
@@ -90,10 +97,38 @@ describe("hunks from hook payloads", () => {
         ].join("\n"),
       },
     });
-    expect(edits.map((e) => e.filePath)).toEqual(["/r/src/new.ts", "/r/src/old.ts"]);
+    expect(edits.map((e) => e.filePath)).toEqual([
+      path.resolve(base.cwd, "src/new.ts"),
+      path.resolve(base.cwd, "src/old.ts"),
+    ]);
     expect(edits[0]?.isNewFile).toBe(true);
     expect(addedLines(edits[0]?.text ?? "")).toEqual(["export const a = 1;"]);
     expect(addedLines(edits[1]?.text ?? "")).toEqual(["export const c = 2;"]);
+  });
+
+  it("names what an apply_patch deleted or moved away", () => {
+    const removed = removedByPatch({
+      ...base,
+      tool_name: "apply_patch",
+      tool_input: {
+        command: [
+          "*** Begin Patch",
+          "*** Add File: src/new.ts",
+          "+export const a = 1;",
+          "*** Update File: src/from.ts",
+          "*** Move to: src/to.ts",
+          "@@",
+          "-export const c = 1;",
+          "+export const c = 2;",
+          "*** Delete File: src/gone.ts",
+          "*** End Patch",
+        ].join("\n"),
+      },
+    });
+    expect(removed).toEqual([
+      path.resolve(base.cwd, "src/from.ts"),
+      path.resolve(base.cwd, "src/gone.ts"),
+    ]);
   });
 
   it("bounds the state it sends", () => {

@@ -13,10 +13,13 @@ const TITLES: Record<AbideErrorCode, string> = {
   SETTINGS_INVALID: "The settings file could not be changed",
   GIT_UNAVAILABLE: "Git history is not readable here",
   CLAUDE_UNAVAILABLE: "Claude Code did not finish the turn",
+  HEADLESS_UNAVAILABLE: "The headless agent could not run",
   HOST_UNKNOWN: "That is not an agent abide knows",
   HOST_NOT_FOUND: "No supported agent was found on this machine",
   CHECK_TIMEOUT: "Jev did not answer in time",
   CHECK_FAILED: "Jev refused the check",
+  REPLAY_READ_FAILED: "The session file could not be read",
+  REPLAY_RECORD_TOO_LARGE: "A session record is too large to read safely",
 };
 
 export function ErrorView({ error }: { error: unknown }) {

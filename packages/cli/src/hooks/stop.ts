@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import {
+  assertNever,
   createBlobId,
   isAbideError,
   stopInputSchema,
@@ -31,20 +32,22 @@ import {
 import { hasApiKey } from "../lib/credentials.js";
 import { loadRules } from "../lib/loadRules.js";
 import { debug } from "../lib/output.js";
-import { findRepoRoot, isExcludedPath, relativeToRoot } from "../lib/paths.js";
+import { findRepoRoot, isExcludedPath, physicalPath, relativeToRoot } from "../lib/paths.js";
 import { readRegularFile, readRegularText } from "../lib/regularFile.js";
-import { flagNotice, repairReason } from "../lib/reason.js";
+import { filesToRepair, flagNotice, repairReason } from "../lib/reason.js";
 import {
   clearTurn,
   createTurnDiffKey,
   hasTurnState,
   incrementStopChecks,
+  isShared,
   readBaseline,
   readBlockedFiles,
   readBaselineStatus,
   readChecked,
   readFileStarts,
   readPrompt,
+  readTouched,
   readTurnHead,
   readTurnRoot,
   recordBlockedDiff,
@@ -123,12 +126,29 @@ const gitTurnDiff = (root: string, dir: string, baseline: string): TurnDiff => {
   };
 };
 
+const ownFiles = (root: string, dir: string, turn: TurnDiff): TurnDiff => {
+  if (turn.kind === "incomplete") return turn;
+  // Git names an edit made through a symlink by the link's target.
+  const physicalRoot = physicalPath(root);
+  const own = new Set([
+    ...readFileStarts(dir).map((start) => relativeToRoot(root, start.path)),
+    ...readTouched(dir).map((file) => relativeToRoot(physicalRoot, file)),
+  ]);
+  const fileDiffs = turn.fileDiffs.filter((f) => own.has(f.file));
+  return {
+    ...turn,
+    files: fileDiffs.map((f) => f.file),
+    fileDiffs,
+  };
+};
+
 /**
  * Everything the turn changed. With a baseline from turn-start it is the git
  * diff between then and now, whichever tool made the change. Without one it
  * is each file's start-of-turn content against the disk, which sees only what
  * Edit and Write touched. Every diff here shares one budget, and a turn that
  * did not fit in it is reported as incomplete rather than checked in part.
+ * A turn shared with another session keeps only files its own edit tools touched.
  */
 export const turnDiff = (root: string, dir: string): TurnDiff => {
   const status = readBaselineStatus(dir);
@@ -138,7 +158,11 @@ export const turnDiff = (root: string, dir: string): TurnDiff => {
   const startRoot = readTurnRoot(dir);
   if (baseline !== undefined && startRoot !== undefined && startRoot !== root)
     return incomplete(`the turn started in ${startRoot} and ended in ${root}`);
-  if (baseline !== undefined) return gitTurnDiff(root, dir, baseline);
+  if (baseline !== undefined) {
+    const turn = gitTurnDiff(root, dir, baseline);
+    // After the snapshot: a later session marks this turn before it can edit.
+    return isShared(dir) ? ownFiles(root, dir, turn) : turn;
+  }
   const deadline = performance.now() + STOP_FALLBACK_DIFF_TIMEOUT_MS;
   const fileDiffs: FileDiff[] = [];
   const missing: string[] = [];
@@ -182,13 +206,23 @@ export const handleStop = async (raw: unknown): Promise<HookOutput> => {
   const parsed = stopInputSchema.safeParse(raw);
   if (!parsed.success) return { kind: "silent" };
   const input = parsed.data;
+  const dir = turnDir(input.session_id, turnIdOf(input));
+  switch (input.turn_state) {
+    case "clear":
+      clearTurn(dir);
+      return { kind: "silent" };
+    case "finish":
+    case "preserve":
+      break;
+    default:
+      return assertNever(input.turn_state);
+  }
   const started = performance.now();
   const at = new Date().toISOString();
   const root = findRepoRoot(input.cwd);
-  const dir = turnDir(input.session_id, turnIdOf(input));
 
   const finish = (output: HookOutput): HookOutput => {
-    if (output.kind !== "block") clearTurn(dir);
+    if (output.kind !== "block" && input.turn_state === "finish") clearTurn(dir);
     return output;
   };
 
@@ -245,7 +279,7 @@ export const handleStop = async (raw: unknown): Promise<HookOutput> => {
     });
   }
 
-  incrementStopChecks(dir);
+  if (input.turn_state === "finish") incrementStopChecks(dir);
   // Edit-phase rules rerun on files the edit checks did not see whole, and on
   // blocked ones: a block the agent ignored must not end the turn quietly.
   const checked = readChecked(dir);
@@ -262,8 +296,9 @@ export const handleStop = async (raw: unknown): Promise<HookOutput> => {
     );
   };
   const unchecked = bounded.filter((f) => !covered(f.file));
-  const task = lastUserPrompt(input.transcript_path ?? undefined) ?? readPrompt(dir);
-  let outcome: CheckOutcome;
+  const task =
+    lastUserPrompt(input.transcript_path ?? undefined) ?? input.prompt ?? readPrompt(dir);
+  let outcomes: CheckOutcome[];
   try {
     const turnOutcome = await runCheck({
       phase: "turn",
@@ -285,7 +320,7 @@ export const handleStop = async (raw: unknown): Promise<HookOutput> => {
         }),
       ),
     );
-    outcome = mergeOutcomes([turnOutcome, ...editOutcomes]);
+    outcomes = [turnOutcome, ...editOutcomes];
   } catch (error) {
     appendEvent(root, {
       kind: "error",
@@ -299,16 +334,23 @@ export const handleStop = async (raw: unknown): Promise<HookOutput> => {
     return finish({ kind: "silent" });
   }
 
+  const outcome = mergeOutcomes(outcomes);
   const byId = new Map(loaded.rules.map((r) => [r.id, r]));
-  const pairs = (band: Verdict["band"]): Pair[] =>
-    outcome.verdicts.flatMap((verdict) => {
+  const toPairs = (verdicts: readonly Verdict[]): Pair[] =>
+    verdicts.flatMap((verdict) => {
       const rule = byId.get(verdict.ruleId);
-      return rule !== undefined && verdict.band === band ? [{ rule, verdict }] : [];
+      return rule === undefined ? [] : [{ rule, verdict }];
     });
   // Deleted files cannot be repaired.
   const repairable = files.filter((f) => existsSync(path.join(root, f)));
-  const acting = repairable.length > 0 ? pairs("act") : [];
-  const flagged = [...pairs("flag"), ...pairs("act").filter((p) => !acting.includes(p))];
+  // Unmerged, so every broken file is named.
+  const acting = toPairs(outcomes.flatMap((o) => o.verdicts)).filter(
+    (p) => p.verdict.band === "act" && filesToRepair([p], repairable).length > 0,
+  );
+  if (input.turn_state === "preserve" && acting.length > 0) incrementStopChecks(dir);
+  const flagged = toPairs(outcome.verdicts).filter(
+    (p) => p.verdict.band !== "clear" && !acting.some((a) => a.rule.id === p.rule.id),
+  );
 
   appendEvent(root, {
     kind: "check",

@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import picomatch from "picomatch";
@@ -12,6 +12,19 @@ export const sessionsDir = (): string => path.join(globalAbideDir(), "sessions")
 export const abideDir = (root: string): string => path.join(root, ".abide");
 export const rubricPath = (root: string): string => path.join(abideDir(root), "rubric.json");
 export const eventsPath = (root: string): string => path.join(abideDir(root), "events.jsonl");
+
+/** A deleted file resolves through its directory. */
+export const physicalPath = (p: string): string => {
+  try {
+    return realpathSync(p);
+  } catch {
+    try {
+      return path.join(realpathSync(path.dirname(p)), path.basename(p));
+    } catch {
+      return p;
+    }
+  }
+};
 
 const isDir = (p: string): boolean => {
   try {
@@ -42,6 +55,9 @@ export const findRepoRoot = (start: string): string => {
 
 export const expandHome = (p: string): string =>
   p === "~" ? homeDir() : p.startsWith("~/") ? path.join(homeDir(), p.slice(2)) : p;
+
+export const piAgentDir = (): string =>
+  path.resolve(expandHome(process.env.PI_CODING_AGENT_DIR || path.join(homeDir(), ".pi", "agent")));
 
 /** Absolute location of a rubric source path ("~/x" or repo-relative). */
 export const resolveSourcePath = (root: string, sourcePath: string): string =>

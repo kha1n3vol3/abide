@@ -24,6 +24,8 @@ export const MAX_BLOCKS_PER_RULE_PER_TURN = 2;
 export const MAX_STOP_CHECKS_PER_TURN = 2;
 
 export const SESSION_STATE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long another session's turn counts as open. An interrupted turn never reaches Stop. */
+export const OPEN_TURN_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 /** How long a single git call may run before it is killed. Well under every hook budget. */
 export const GIT_TIMEOUT_MS = 5_000;
@@ -38,5 +40,6 @@ export const DIFF_TIMEOUT_MS = 2_000;
 export const MAX_DIFF_INPUT_CHARS = 1_000_000;
 /** Past this a file counts as unreadable. */
 export const MAX_FILE_READ_BYTES = 16 * 1024 * 1024;
+export const MAX_REPLAY_RECORD_BYTES = 16 * 1024 * 1024;
 /** How long Stop's per-file fallback may spend on all of its diffs together. */
 export const STOP_FALLBACK_DIFF_TIMEOUT_MS = 6_000;
