@@ -1,7 +1,14 @@
 import { readdirSync, existsSync, type Dirent } from "node:fs";
 import path from "node:path";
 import { createSourceSha, type Rubric } from "@coldtea/abide-schema";
-import { homeDir, piAgentDir, resolveSourcePath, toSourcePath } from "./paths.js";
+import {
+  claudeConfigDir,
+  homeDir,
+  isHomeDir,
+  piAgentDir,
+  resolveSourcePath,
+  toSourcePath,
+} from "./paths.js";
 import { readRegularFile } from "./regularFile.js";
 
 export type SourceCandidate = {
@@ -38,7 +45,11 @@ const contextNames = (dir: string): string[] => {
     ),
   ];
 };
-const GLOBAL_NAMES = ["~/.claude/CLAUDE.md", "~/.codex/AGENTS.md", "~/.config/opencode/AGENTS.md"];
+const globalFiles = (): string[] => [
+  path.join(claudeConfigDir(), "CLAUDE.md"),
+  path.join(homeDir(), ".codex", "AGENTS.md"),
+  path.join(homeDir(), ".config", "opencode", "AGENTS.md"),
+];
 const SKIP_DIRS = new Set([
   "node_modules",
   ".git",
@@ -88,6 +99,7 @@ const walkNested = (root: string, dir: string, depth: number, out: SourceCandida
 
 export const discoverProjectSources = (root: string): SourceCandidate[] => {
   const found: SourceCandidate[] = [];
+  if (isHomeDir(root)) return found;
   for (const name of [...contextNames(root), ".cursorrules"]) {
     const file = path.join(root, name);
     if (existsSync(file)) {
@@ -109,12 +121,19 @@ export const discoverProjectSources = (root: string): SourceCandidate[] => {
 };
 
 export const discoverGlobalSources = (): SourceCandidate[] => {
-  const found: SourceCandidate[] = GLOBAL_NAMES.flatMap((p) => {
-    const absolute = path.join(homeDir(), p.slice(2));
-    return existsSync(absolute)
-      ? [{ path: p, absolute, scope: "**/*", required: true, origin: "global" as const }]
-      : [];
-  });
+  const found: SourceCandidate[] = globalFiles().flatMap((absolute) =>
+    existsSync(absolute)
+      ? [
+          {
+            path: toSourcePath(homeDir(), absolute),
+            absolute,
+            scope: "**/*",
+            required: true,
+            origin: "global" as const,
+          },
+        ]
+      : [],
+  );
   const agentDir = piAgentDir();
   const name = contextNames(agentDir)[0];
   if (name !== undefined) {
@@ -138,6 +157,7 @@ export const hashFile = (absolute: string): string | undefined => {
 export type Staleness =
   | { status: "missing" }
   | { status: "fresh" }
+  | { status: "manual" }
   | { status: "stale"; changed: string[]; added: string[]; removed: string[]; unhashed: string[] };
 
 export const checkStaleness = (
@@ -146,6 +166,7 @@ export const checkStaleness = (
   root: string,
 ): Staleness => {
   if (rubric === undefined) return { status: "missing" };
+  if (rubric.manual === true) return { status: "manual" };
   const changed: string[] = [];
   const removed: string[] = [];
   const unhashed: string[] = [];
@@ -165,12 +186,27 @@ export const checkStaleness = (
   return { status: "stale", changed, added, removed, unhashed };
 };
 
+export const needsCompile = (s: Staleness): boolean => {
+  switch (s.status) {
+    case "missing":
+    case "stale":
+      return true;
+    case "fresh":
+    case "manual":
+      return false;
+    default:
+      return assertNeverStaleness(s);
+  }
+};
+
 export const describeStaleness = (s: Staleness): string => {
   switch (s.status) {
     case "missing":
       return "no rubric yet";
     case "fresh":
       return "up to date";
+    case "manual":
+      return "maintained by hand";
     case "stale": {
       const parts: string[] = [];
       if (s.changed.length) parts.push(`changed: ${s.changed.join(", ")}`);

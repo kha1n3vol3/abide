@@ -77,6 +77,8 @@ The agent repairs it before moving on. No human in the loop.
 
 `init` with no name installs into every agent it finds. Add `--project` to install into the repo instead, so teammates get it with the checkout.
 
+`CLAUDE_CONFIG_DIR`, when set, replaces `~/.claude` for Claude Code's settings file, its global `CLAUDE.md` and `abide replay claude`, as it does for Claude Code itself.
+
 Codex only: start `codex`, type `/hooks`, and accept the four abide entries. Codex asks this once for any new hook. Codex edits through `apply_patch`; abide reads the patch and judges every file in it.
 
 OpenCode only: there are no hook processes, so abide runs as a plugin. Same checks, same messages: an edit that breaks a rule gets the repair request appended to its tool result, and a turn that ends with one gets a single follow-up message.
@@ -127,6 +129,7 @@ Pi runs with `--print --no-session`, using its configured model and authenticati
 - Each rule can carry a `scope` of globs, so an API route and a stylesheet get different questions.
 - Verdicts are banded. 0.8 and above: the agent is told to repair. 0.5 to 0.8: you see a note, the agent does not. Below 0.5: nothing.
 - A badly worded rule scores 0.4 on everything and never fires. `calibrate` finds those against twenty real hunks from your history and switches them off. `tune` has the agent rewrite them.
+- A rubric you write by hand can set `"manual": true`. Session start then never reports it stale or asks the agent to recompile it, and `abide compile` leaves it alone. List its instruction files in `sources` as usual, since `abide rubric validate` still checks every rule against them.
 
 ![abide report](docs/images/report.svg)
 
