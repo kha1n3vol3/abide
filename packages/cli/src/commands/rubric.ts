@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { AbideError } from "@coldtea/abide-schema";
+import { parseBeadsSourcePath, readBeadsMemories, type BeadsRead } from "../lib/beadsMemories.js";
 import { findRepoRoot, globalRubricPath, homeDir, rubricPath } from "../lib/paths.js";
 import { fillSourceShas, readRubric, writeRubric } from "../lib/rubricFile.js";
 import { showStatic } from "../ui/render.js";
@@ -28,7 +29,15 @@ export const runRubric = async (argv: string[]): Promise<number> => {
       await showStatic(RubricView({ data: { kind: "invalid", root, file, issues: read.issues } }));
       return 1;
     case "ok": {
-      const { rubric, missing } = fillSourceShas(read.rubric, root);
+      const hasMemories = read.rubric.sources.some(
+        (source) => parseBeadsSourcePath(source.path).kind === "beads",
+      );
+      if (values.global && hasMemories)
+        throw new AbideError("RUBRIC_INVALID", "Global rubrics cannot import Beads memories");
+      const beads: BeadsRead = hasMemories
+        ? { kind: "loaded", memories: readBeadsMemories(root) }
+        : { kind: "not-requested" };
+      const { rubric, missing } = fillSourceShas(read.rubric, root, beads);
       const listed = new Set(rubric.sources.map((s) => s.path));
       const orphaned = rubric.rules
         .filter((r) => !listed.has(r.source.path))

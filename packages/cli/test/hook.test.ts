@@ -1,5 +1,5 @@
 import { execFileSync, execSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -315,6 +315,75 @@ describe("the hook never breaks the agent (needs `pnpm build` first)", () => {
       expect(turnEvents[0].reason).toContain("turn start");
     }
   }, 60_000);
+
+  it("uses memory-only rubrics offline without calling Beads", () => {
+    const root = repoRoot();
+    mkdirSync(path.join(root, ".abide"));
+    mkdirSync(path.join(root, "bin"));
+    const marker = path.join(root, "beads-called");
+    writeFileSync(
+      path.join(root, "bin/bd"),
+      `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)},'called');`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(root, ".abide/rubric.json"),
+      JSON.stringify({
+        version: 1,
+        compiledAt: "test",
+        sources: [{ path: "beads://memory/copy", sha: "0".repeat(64) }],
+        rules: [],
+      }),
+    );
+    const start = spawnSync(process.execPath, [script, "session-start"], {
+      input: JSON.stringify({
+        session_id: "memory-only",
+        cwd: root,
+        hook_event_name: "SessionStart",
+        source: "startup",
+      }),
+      env: {
+        ...process.env,
+        PATH: path.join(root, "bin"),
+        ABIDE_HOME_DIR: home,
+        AI_GATEWAY_API_KEY: "",
+        TYPESAFE_AI_API_KEY: "",
+      },
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    expect(start.status).toBe(0);
+    expect(start.stdout).not.toContain("additionalContext");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("asks for file recompilation while preserving unrefreshed memory rules", () => {
+    const root = repoWith([]);
+    writeFileSync(
+      path.join(root, ".abide/rubric.json"),
+      JSON.stringify({
+        version: 1,
+        compiledAt: "test",
+        sources: [
+          { path: "AGENTS.md", sha: "0".repeat(64) },
+          { path: "beads://memory/copy", sha: "0".repeat(64) },
+        ],
+        rules: [],
+      }),
+    );
+    const result = run(
+      "session-start",
+      JSON.stringify({
+        session_id: "mixed-memories",
+        cwd: root,
+        hook_event_name: "SessionStart",
+        source: "startup",
+      }),
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Preserve existing Beads-derived rules and source hashes");
+    expect(result.stdout).not.toContain("gone: beads");
+  });
 
   it("session-start in a repo with an AGENTS.md and no rubric asks for a compile", () => {
     const root = repoRoot();

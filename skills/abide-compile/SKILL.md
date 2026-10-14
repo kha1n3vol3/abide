@@ -1,6 +1,6 @@
 ---
 name: abide-compile
-description: Compile a repository's instruction files (AGENTS.md, CLAUDE.md and friends) into an Abide rubric, then validate and calibrate it.
+description: Compile instruction files and supplied live Beads memories into an Abide rubric, then validate and calibrate it.
 ---
 
 # Compile an Abide rubric
@@ -9,12 +9,15 @@ You are turning the rules a person wrote for coding agents into a rubric that a 
 
 Two facts before you start:
 
-- Rules come only from the user's own files. Never add a rule you think they should have. If a file holds zero rules, the rubric holds zero rules and you say so.
+- Rules come only from the user's own source instructions. Never add a rule you think they should have. Sources with zero instructions contribute zero rules.
 - The rubric is a committed, hand-editable file. A person will read it, and a verdict must trace to a rule they can point at. Quote their wording.
 
 ## Step 1. Read the sources
 
-The hook that sent you here listed the instruction files it found and where the rubric goes. Read every listed file in full. Then:
+The prompt lists file sources and, after `compile --beads`, live Beads source blocks. Read each file in full. Decode each Beads block's `text` as its original source value; its key, URI, and hash are provenance, not instructions. Never open a `beads://` URI as a file or export the memories to another file. Then:
+
+- Without a live Beads set, preserve existing Beads-derived rules and source hashes unchanged, including during file recompilation or tuning. With a live set, replace that part of the rubric and remove references/rules for absent keys. An empty live set removes all old Beads-derived rules.
+- Keep conflicting instructions from different sources identifiable and flag them for review. Do not invent precedence or silently discard an origin.
 
 - Follow pointer files. A file whose whole content is "Read instructions from X" or "Read ./AGENTS.md" is a pointer. Read X and treat X as a source in its own right: list it under `sources` with its own path so it gets its own hash.
 - Files under a subdirectory apply only there. The hook gave each one a scope glob. Rules from that file carry that glob.
@@ -28,7 +31,7 @@ Go through each file top to bottom. A rule is any sentence that tells the agent 
 For each rule capture:
 
 - `text`: the user's own words, trimmed to one or two sentences. Do not paraphrase into something more general.
-- `source.path` and `source.line`: where it came from. Line numbers matter; they are how the person finds it.
+- `source.path` and `source.line`: where it came from. For Beads, use the supplied canonical `beads://memory/<encoded-key>` path and count lines within the decoded original `text`, starting at 1. Do not use line numbers in the JSON block. Descriptive memory facts are not rules.
 - Any code block next to it. A worked example or counterexample carries more signal than the prose, and belongs in the question's criteria (see step 4).
 
 Do not merge two rules into one because they sit under one heading. Do not split a rule that is one idea.
@@ -148,7 +151,7 @@ Write the file the hook named (`.abide/rubric.json` for the project, `~/.abide/g
 Rules of the file:
 
 - `id` is a short kebab-case name that says what the rule catches. Ids must be unique within the file.
-- Leave `sha` out of `sources`; the CLI computes it in the next step.
+- Leave `sha` out for file sources; validation fills it. For Beads sources, copy the supplied `sha` into `sources` exactly. Validation checks it against the live value and refuses changed, missing, or unhashed memories before writing.
 - Every rule's `source.path` must appear in `sources`.
 - No `status` field on new rules; it defaults to `active`. Do not write `calibration`; the CLI does.
 - Write it as plain JSON with your file-writing tool. Nothing else goes in the file.
@@ -162,7 +165,7 @@ abide rubric validate            (add --global for ~/.abide/global.json)
 abide calibrate                  (same flag)
 ```
 
-`validate` parses the file, fills in the source hashes, and prints the bucket table. Fix every issue it prints and run it again until it is clean.
+`validate` parses the rubric, fills file hashes, and prints the bucket table. If it contains Beads sources, validation reads the live project memories once to confirm their hashes. A changed or removed memory needs another `compile --beads`; do not relabel stale instructions with a new hash. If Beads is unavailable, the rubric cannot be live-validated, but hooks can still enforce its previously compiled rules. Fix reported issues before claiming validation.
 
 `calibrate` runs every model rule against about twenty real hunks from the repository's git history and marks rules whose scores never get near 0 or near 1 as `weak`, and rules that fire on most historic hunks as `noisy`. Both are switched off until rewritten. When it reports any, rewrite those questions once using step 4 (make them more concrete, split them, add a criteria example, or move them to the other phase), run `validate` and `calibrate` again, and stop there whatever the result. Do not loop more than once. A repository with no history skips calibration; that is fine.
 

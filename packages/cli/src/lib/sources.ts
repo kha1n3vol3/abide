@@ -1,6 +1,6 @@
 import { readdirSync, existsSync, type Dirent } from "node:fs";
 import path from "node:path";
-import { createSourceSha, type Rubric } from "@coldtea/abide-schema";
+import { assertNever, createSourceSha, type Rubric } from "@coldtea/abide-schema";
 import {
   claudeConfigDir,
   homeDir,
@@ -9,9 +9,15 @@ import {
   resolveSourcePath,
   toSourcePath,
 } from "./paths.js";
+import {
+  createBeadsSourcePath,
+  parseBeadsSourcePath,
+  type BeadsMemory,
+  type BeadsRead,
+} from "./beadsMemories.js";
 import { readRegularFile } from "./regularFile.js";
 
-export type SourceCandidate = {
+type FileSourceCandidate = {
   /** Rubric spelling: repo-relative or "~/...". */
   path: string;
   absolute: string;
@@ -20,6 +26,44 @@ export type SourceCandidate = {
   /** Required candidates must appear in the rubric for it to be fresh. */
   required: boolean;
   origin: "root" | "nested" | "global" | "contributing";
+};
+
+type BeadsSourceCandidate = {
+  origin: "beads";
+  path: string;
+  scope: string;
+  required: boolean;
+  key: string;
+  text: string;
+  sha: string;
+};
+
+export type SourceCandidate = FileSourceCandidate | BeadsSourceCandidate;
+
+export const beadsSourceCandidates = (memories: readonly BeadsMemory[]): SourceCandidate[] =>
+  [...memories]
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map((memory) => ({
+      origin: "beads",
+      path: createBeadsSourcePath(memory.key),
+      scope: "**/*",
+      required: true,
+      key: memory.key,
+      text: memory.text,
+      sha: createSourceSha(memory.text),
+    }));
+
+export const beadsSourceHashes = (beads: BeadsRead): ReadonlyMap<string, string> | undefined => {
+  switch (beads.kind) {
+    case "not-requested":
+      return undefined;
+    case "loaded":
+      return new Map(
+        beads.memories.map((m) => [createBeadsSourcePath(m.key), createSourceSha(m.text)]),
+      );
+    default:
+      return assertNever(beads);
+  }
 };
 
 const CONTEXT_NAMES = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
@@ -69,7 +113,7 @@ const SKIP_DIRS = new Set([
 ]);
 const MAX_DEPTH = 6;
 
-const walkNested = (root: string, dir: string, depth: number, out: SourceCandidate[]): void => {
+const walkNested = (root: string, dir: string, depth: number, out: FileSourceCandidate[]): void => {
   if (depth > MAX_DEPTH) return;
   let entries: Dirent[];
   try {
@@ -97,8 +141,8 @@ const walkNested = (root: string, dir: string, depth: number, out: SourceCandida
   }
 };
 
-export const discoverProjectSources = (root: string): SourceCandidate[] => {
-  const found: SourceCandidate[] = [];
+export const discoverProjectSources = (root: string): FileSourceCandidate[] => {
+  const found: FileSourceCandidate[] = [];
   if (isHomeDir(root)) return found;
   for (const name of [...contextNames(root), ".cursorrules"]) {
     const file = path.join(root, name);
@@ -120,8 +164,8 @@ export const discoverProjectSources = (root: string): SourceCandidate[] => {
   return found;
 };
 
-export const discoverGlobalSources = (): SourceCandidate[] => {
-  const found: SourceCandidate[] = globalFiles().flatMap((absolute) =>
+export const discoverGlobalSources = (): FileSourceCandidate[] => {
+  const found: FileSourceCandidate[] = globalFiles().flatMap((absolute) =>
     existsSync(absolute)
       ? [
           {
@@ -164,22 +208,59 @@ export const checkStaleness = (
   rubric: Rubric | undefined,
   candidates: SourceCandidate[],
   root: string,
+  beads: BeadsRead = { kind: "not-requested" },
 ): Staleness => {
   if (rubric === undefined) return { status: "missing" };
   if (rubric.manual === true) return { status: "manual" };
   const changed: string[] = [];
   const removed: string[] = [];
   const unhashed: string[] = [];
+  const memoryHashes = beadsSourceHashes(beads);
   for (const source of rubric.sources) {
-    const now = hashFile(resolveSourcePath(root, source.path));
+    const reference = parseBeadsSourcePath(source.path);
+    let now: string | undefined;
+    switch (reference.kind) {
+      case "beads":
+        if (memoryHashes === undefined) continue;
+        now = memoryHashes.get(source.path);
+        break;
+      case "file":
+        now = hashFile(resolveSourcePath(root, source.path));
+        break;
+      default:
+        return assertNever(reference);
+    }
     if (now === undefined) removed.push(source.path);
     else if (source.sha === undefined) unhashed.push(source.path);
     else if (source.sha !== now) changed.push(source.path);
   }
-  const listed = new Set(rubric.sources.map((s) => path.resolve(resolveSourcePath(root, s.path))));
-  const added = candidates
-    .filter((c) => c.required && !listed.has(path.resolve(c.absolute)))
-    .map((c) => c.path);
+  const listed = new Set(
+    rubric.sources.map((s) => {
+      const reference = parseBeadsSourcePath(s.path);
+      switch (reference.kind) {
+        case "beads":
+          return s.path;
+        case "file":
+          return path.resolve(resolveSourcePath(root, s.path));
+        default:
+          return assertNever(reference);
+      }
+    }),
+  );
+  const identity = (c: SourceCandidate): string => {
+    switch (c.origin) {
+      case "beads":
+        return c.path;
+      case "root":
+      case "nested":
+      case "global":
+      case "contributing":
+        return path.resolve(c.absolute);
+      default:
+        return assertNever(c);
+    }
+  };
+  const added = candidates.filter((c) => c.required && !listed.has(identity(c))).map((c) => c.path);
   if (changed.length + removed.length + unhashed.length + added.length === 0) {
     return { status: "fresh" };
   }

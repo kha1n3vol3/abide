@@ -1,13 +1,16 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
+  AbideError,
+  assertNever,
   rubricSchema,
   type CheckType,
   type Rubric,
   type Rule,
   type RuleStatus,
 } from "@coldtea/abide-schema";
-import { hashFile } from "./sources.js";
+import { beadsSourceHashes, hashFile } from "./sources.js";
+import { parseBeadsSourcePath, type BeadsRead } from "./beadsMemories.js";
 import { canonicalSourcePath, resolveSourcePath } from "./paths.js";
 import { readRegularText } from "./regularFile.js";
 
@@ -46,11 +49,29 @@ export const writeRubric = (file: string, rubric: Rubric): void => {
 export const fillSourceShas = (
   rubric: Rubric,
   root: string,
+  beads: BeadsRead = { kind: "not-requested" },
 ): { rubric: Rubric; missing: string[] } => {
   const missing: string[] = [];
+  const memoryHashes = beadsSourceHashes(beads);
   const sources = rubric.sources.map((source) => {
     const canonical = canonicalSourcePath(root, source.path);
-    const sha = hashFile(resolveSourcePath(root, source.path));
+    const reference = parseBeadsSourcePath(source.path);
+    let sha: string | undefined;
+    switch (reference.kind) {
+      case "beads":
+        sha = memoryHashes?.get(source.path);
+        if (sha === undefined || source.sha === undefined || sha !== source.sha)
+          throw new AbideError(
+            "RUBRIC_INVALID",
+            "Beads sources are missing or changed; run compile --beads again",
+          );
+        break;
+      case "file":
+        sha = hashFile(resolveSourcePath(root, source.path));
+        break;
+      default:
+        return assertNever(reference);
+    }
     if (sha === undefined) {
       missing.push(source.path);
       return { ...source, path: canonical };

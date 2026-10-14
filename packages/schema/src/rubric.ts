@@ -127,6 +127,7 @@ export type Calibration = z.infer<typeof calibrationSchema>;
 
 export const ruleSourceSchema = z.object({
   path: z.string().min(1),
+  /** For Beads references, counted within the original memory value. */
   line: z.number().int().min(1).optional(),
 });
 
@@ -156,9 +157,9 @@ export type Rule = z.infer<typeof ruleSchema>;
 export type RuleInput = z.input<typeof ruleSchema>;
 
 export const rubricSourceSchema = z.object({
-  /** Repo-relative path, or "~/..." for a file in the home directory. */
+  /** File path or canonical beads://memory/<encoded-key> reference. */
   path: z.string().min(1),
-  /** sha256 hex of the file bytes. Filled by `abide rubric validate`. */
+  /** File-byte hash filled by validation; Beads value hashes must match live content. */
   sha: z
     .string()
     .regex(/^[0-9a-f]{64}$/)
