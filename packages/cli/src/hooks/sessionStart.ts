@@ -1,4 +1,5 @@
-import { sessionStartInputSchema, type HookOutput } from "@coldtea/abide-schema";
+import { assertNever, sessionStartInputSchema, type HookOutput } from "@coldtea/abide-schema";
+import { parseBeadsSourcePath, type BeadsRead } from "../lib/beadsMemories.js";
 import { compilePrompt, type CompileTarget } from "../lib/compilePrompt.js";
 import { appendEvent } from "../lib/events.js";
 import { hasApiKey } from "../lib/credentials.js";
@@ -8,10 +9,12 @@ import { findRepoRoot, globalRubricPath, homeDir, rubricPath } from "../lib/path
 import { readRubric } from "../lib/rubricFile.js";
 import { pruneOldTurns } from "../lib/session.js";
 import {
+  beadsSourceCandidates,
   checkStaleness,
   discoverGlobalSources,
   discoverProjectSources,
   needsCompile,
+  type SourceCandidate,
 } from "../lib/sources.js";
 
 export type CompilePlan = {
@@ -23,28 +26,42 @@ export type CompilePlan = {
 };
 
 /** What, if anything, needs compiling for this repository and this machine. */
-export const planCompile = (root: string): CompilePlan => {
+export const planCompile = (
+  root: string,
+  beads: BeadsRead = { kind: "not-requested" },
+): CompilePlan => {
   const targets: CompileTarget[] = [];
   const invalid: string[] = [];
   const manual: CompileTarget["which"][] = [];
 
-  const project = discoverProjectSources(root);
+  const project: SourceCandidate[] = discoverProjectSources(root);
+  switch (beads.kind) {
+    case "loaded":
+      project.push(...beadsSourceCandidates(beads.memories));
+      break;
+    case "not-requested":
+      break;
+    default:
+      return assertNever(beads);
+  }
   const projectRead = readRubric(rubricPath(root));
   if (projectRead.kind === "invalid") {
     invalid.push(`${projectRead.path}: ${projectRead.issues.slice(0, 3).join("; ")}`);
   }
   const projectRubric = projectRead.kind === "ok" ? projectRead.rubric : undefined;
-  const projectStale = checkStaleness(projectRubric, project, root);
+  const hasProjectSources =
+    project.some((c) => c.required) ||
+    beads.kind === "loaded" ||
+    (projectRubric?.sources.some((source) => parseBeadsSourcePath(source.path).kind === "beads") ??
+      false);
+  const projectStale = checkStaleness(projectRubric, project, root, beads);
   if (projectStale.status === "manual") manual.push("project");
-  if (
-    project.some((c) => c.required) &&
-    needsCompile(projectStale) &&
-    projectRead.kind !== "invalid"
-  ) {
+  if (hasProjectSources && needsCompile(projectStale) && projectRead.kind !== "invalid") {
     targets.push({
       which: "project",
       root,
       candidates: project,
+      beads,
       staleness: projectStale,
       lintConfigs: findLintConfigs(root),
     });
@@ -63,12 +80,18 @@ export const planCompile = (root: string): CompilePlan => {
       which: "global",
       root: homeDir(),
       candidates: global,
+      beads: { kind: "not-requested" },
       staleness: globalStale,
       lintConfigs: [],
     });
   }
 
-  return { targets, invalid, manual, noSources: project.length === 0 && global.length === 0 };
+  return {
+    targets,
+    invalid,
+    manual,
+    noSources: !hasProjectSources && project.length === 0 && global.length === 0,
+  };
 };
 
 export const handleSessionStart = async (raw: unknown): Promise<HookOutput> => {

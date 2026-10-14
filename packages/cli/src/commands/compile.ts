@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { AbideError, assertNever, type AbideErrorCode, type Rubric } from "@coldtea/abide-schema";
 import { parseCompileAgent, runHeadless, selectCompileAgent } from "../lib/headless.js";
+import { parseBeadsSourcePath, readBeadsMemories, type BeadsRead } from "../lib/beadsMemories.js";
 import { hostLabel } from "../lib/hosts.js";
 import { compilePrompt, type TuneStats } from "../lib/compilePrompt.js";
 import { readEvents } from "../lib/events.js";
@@ -89,12 +90,27 @@ export const runCompile = async (argv: string[], tune: boolean): Promise<number>
     options: {
       print: { type: "boolean", default: false },
       global: { type: "boolean", default: false },
+      beads: { type: "boolean", default: false },
       agent: { type: "string" },
     },
   });
+  if (values.beads && (values.global || tune))
+    throw new AbideError("SETTINGS_INVALID", "--beads is supported only by project compile");
   const requestedAgent = parseCompileAgent(values.agent);
   const root = findRepoRoot(process.cwd());
-  const plan = planCompile(root);
+  const beads: BeadsRead = values.beads
+    ? { kind: "loaded", memories: readBeadsMemories(root) }
+    : { kind: "not-requested" };
+  const existing = readRubric(rubricPath(root));
+  if (
+    !values.beads &&
+    existing.kind === "ok" &&
+    existing.rubric.sources.some((source) => parseBeadsSourcePath(source.path).kind === "beads")
+  )
+    await showStatic(
+      Callout({ tone: "warn", title: "Beads memories were not refreshed; use compile --beads" }),
+    );
+  const plan = planCompile(root, beads);
   if (plan.invalid.length > 0) {
     await showStatic(
       Callout({
@@ -131,6 +147,7 @@ export const runCompile = async (argv: string[], tune: boolean): Promise<number>
           which: "global" as const,
           root: homeDir(),
           candidates: discoverGlobalSources(),
+          beads: { kind: "not-requested" } as const,
           staleness: checkStaleness(stats.rubric, discoverGlobalSources(), homeDir()),
           lintConfigs: [],
         }
@@ -138,6 +155,7 @@ export const runCompile = async (argv: string[], tune: boolean): Promise<number>
           which: "project" as const,
           root,
           candidates: discoverProjectSources(root),
+          beads: { kind: "not-requested" } as const,
           staleness: checkStaleness(stats.rubric, discoverProjectSources(root), root),
           lintConfigs: findLintConfigs(root),
         };

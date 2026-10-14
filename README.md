@@ -39,7 +39,7 @@ Abide enforces exactly those rules. On every edit (or turn) it asks [Jev](https:
 
 - One call per edit, about 300 ms, a few thousandths of a cent.
 - Rules a linter could check are handed to your linter instead.
-- No built-in rules. No instruction files, nothing to enforce.
+- No built-in rules. Rules come from your instruction files and explicitly imported Beads memories.
 - Your key, your data. Nothing here talks to a server of ours.
 
 ## Not previously possible
@@ -121,9 +121,21 @@ Every file is judged as if it had just been written. You get a table by rule and
 
 Pi runs with `--print --no-session`, using its configured model and authentication. It does not save a session or override project trust: trust the repo in Pi first if compilation needs project settings or extensions. Claude Code uses its saved login without inheriting `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` from your shell.
 
+## Import Beads memories
+
+Run `abide compile --beads` in an existing Beads workspace to read its memories live and compile them alongside instruction files. A project can use memories without an `AGENTS.md`. Abide does not export memory text to a file or cache it.
+
+Each memory source is named `beads://memory/<encoded-key>`. Its rule line numbers refer to the original memory value, and its source hash covers that value's UTF-8 bytes. `abide rubric validate` reads the project memories once to confirm those hashes. A changed or removed memory needs another live compile.
+
+Run `compile --beads` again after changing memories with `bd remember` or `bd forget`. Hooks check the compiled rubric without querying Beads; ordinary file compilation and tuning preserve unrefreshed memory rules. They cannot detect live changes. Beads uses the existing workspace connection and environment overrides. Global imports and `tune --beads` are not supported.
+
+Descriptive facts create no rules. Process instructions such as running tests before closing an issue are recorded as unenforceable because a diff cannot prove them. Conflicting file and memory instructions keep their own provenance for review.
+
+`compile --beads --print` prints the memory text in the compile prompt without starting an agent. Keep secrets out of imported memories and saved prompts: the text reaches your compile agent, and extracted instructions reach the judge. If Beads is unavailable, explicit import or memory-hash validation fails; previously compiled rules still work in hooks. File-only workflows do not need Beads installed.
+
 ## The rubric is yours
 
-`.abide/rubric.json` is a committed, readable file. Every verdict names a rule in it, and every rule quotes the line of your instruction file it came from. A wrong verdict is a rule you can rewrite.
+`.abide/rubric.json` is a committed, readable file. Every verdict names a rule in it, and every rule quotes the line of the instruction file or imported memory it came from. A wrong verdict is a rule you can rewrite.
 
 - Each rule runs at one of two moments: `edit` after each edit, `turn` once at the end against the whole diff. "Did this add more than was asked" has no answer after edit 1 of 12.
 - Each rule can carry a `scope` of globs, so an API route and a stylesheet get different questions.

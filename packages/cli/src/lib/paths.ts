@@ -4,6 +4,8 @@ import picomatch from "picomatch";
 import { homedir } from "node:os";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { readRegularText } from "./regularFile.js";
+import { assertNever } from "@coldtea/abide-schema";
+import { parseBeadsSourcePath } from "./beadsMemories.js";
 
 export const homeDir = (): string => process.env.ABIDE_HOME_DIR ?? homedir();
 
@@ -110,8 +112,17 @@ export const toSourcePath = (root: string, absolute: string): string => {
 };
 
 /** One spelling for a source path however the agent wrote it. */
-export const canonicalSourcePath = (root: string, sourcePath: string): string =>
-  toSourcePath(root, resolveSourcePath(root, sourcePath));
+export const canonicalSourcePath = (root: string, sourcePath: string): string => {
+  const reference = parseBeadsSourcePath(sourcePath);
+  switch (reference.kind) {
+    case "beads":
+      return sourcePath;
+    case "file":
+      return toSourcePath(root, resolveSourcePath(root, sourcePath));
+    default:
+      return assertNever(reference);
+  }
+};
 
 export const relativeToRoot = (root: string, absolute: string): string =>
   toPosix(path.relative(root, absolute));

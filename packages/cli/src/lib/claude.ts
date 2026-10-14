@@ -6,7 +6,6 @@ import { discoverGlobalSources } from "./sources.js";
 export const claudeAvailable = (): boolean =>
   spawnSync("claude", ["--version"], { encoding: "utf8" }).status === 0;
 
-/** Runs one headless Claude Code turn in the repo and streams its output. */
 export const runClaude = (root: string, prompt: string): Promise<number> =>
   new Promise((resolve) => {
     const extraDirs = [
@@ -22,7 +21,6 @@ export const runClaude = (root: string, prompt: string): Promise<number> =>
       "claude",
       [
         "-p",
-        prompt,
         "--permission-mode",
         "acceptEdits",
         "--allowedTools",
@@ -33,8 +31,13 @@ export const runClaude = (root: string, prompt: string): Promise<number> =>
         "--output-format",
         "text",
       ],
-      { cwd: root, stdio: "inherit", env },
+      { cwd: root, stdio: ["pipe", "inherit", "inherit"], env },
     );
     child.on("exit", (code) => resolve(code ?? 1));
     child.on("error", () => resolve(1));
+    child.stdin.on("error", () => {
+      child.kill();
+      resolve(1);
+    });
+    child.stdin.end(prompt);
   });

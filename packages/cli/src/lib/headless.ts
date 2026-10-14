@@ -41,12 +41,17 @@ export const runHeadless = (agent: CompileAgent, root: string, prompt: string): 
       return runClaude(root, prompt);
     case "pi":
       return new Promise((resolve) => {
-        const child = spawn("pi", ["--print", "--no-session", "--", prompt], {
+        const child = spawn("pi", ["--print", "--no-session"], {
           cwd: root,
-          stdio: ["ignore", "inherit", "inherit"],
+          stdio: ["pipe", "inherit", "inherit"],
         });
         child.on("exit", (code) => resolve(code ?? 1));
         child.on("error", () => resolve(1));
+        child.stdin.on("error", () => {
+          child.kill();
+          resolve(1);
+        });
+        child.stdin.end(prompt);
       });
     default:
       return assertNever(agent);

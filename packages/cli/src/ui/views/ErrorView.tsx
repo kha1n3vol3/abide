@@ -14,6 +14,8 @@ const TITLES: Record<AbideErrorCode, string> = {
   GIT_UNAVAILABLE: "Git history is not readable here",
   CLAUDE_UNAVAILABLE: "Claude Code did not finish the turn",
   HEADLESS_UNAVAILABLE: "The headless agent could not run",
+  BEADS_UNAVAILABLE: "Beads memories are not available here",
+  BEADS_IMPORT_FAILED: "Beads memories could not be imported",
   HOST_UNKNOWN: "That is not an agent abide knows",
   HOST_NOT_FOUND: "No supported agent was found on this machine",
   CHECK_TIMEOUT: "Jev did not answer in time",

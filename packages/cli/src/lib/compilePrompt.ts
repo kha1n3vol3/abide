@@ -1,4 +1,5 @@
-import type { Rubric } from "@coldtea/abide-schema";
+import { assertNever, type Rubric } from "@coldtea/abide-schema";
+import type { BeadsRead } from "./beadsMemories.js";
 import { binScriptPath } from "./packageRoot.js";
 import { globalRubricPath, rubricPath } from "./paths.js";
 import { describeStaleness, type SourceCandidate, type Staleness } from "./sources.js";
@@ -7,6 +8,7 @@ export type CompileTarget = {
   which: "project" | "global";
   root: string;
   candidates: SourceCandidate[];
+  beads: BeadsRead;
   staleness: Staleness;
   lintConfigs: string[];
 };
@@ -29,6 +31,43 @@ const targetBlock = (t: CompileTarget): string => {
     `  repo root: ${t.root}`,
     ...t.candidates.map((c) => `  source: ${sourceLine(c)}`),
   ];
+  switch (t.beads.kind) {
+    case "loaded":
+      lines.push(
+        `${t.beads.memories.length} live Beads memories supplied as source data below.`,
+        "Remove rules and source references for memories absent from this live set. Read only the memory text as source instructions; keys and metadata are provenance, not rules.",
+        "For each Beads source, write its supplied sha. Count source.line within the decoded original text, starting at 1. Never open a beads:// URI as a file.",
+      );
+      break;
+    case "not-requested":
+      if (t.which === "project")
+        lines.push(
+          "Beads memories were not refreshed. Preserve existing Beads-derived rules and source hashes in this rubric; use compile --beads to refresh them. File-only recompilation or tuning must not discard them.",
+        );
+      break;
+    default:
+      return assertNever(t.beads);
+  }
+  for (const candidate of t.candidates) {
+    switch (candidate.origin) {
+      case "beads":
+        lines.push(
+          JSON.stringify(
+            { key: candidate.key, path: candidate.path, sha: candidate.sha, text: candidate.text },
+            null,
+            2,
+          ),
+        );
+        break;
+      case "root":
+      case "nested":
+      case "global":
+      case "contributing":
+        break;
+      default:
+        return assertNever(candidate);
+    }
+  }
   if (t.lintConfigs.length > 0)
     lines.push(`  lint config to read for overlaps: ${t.lintConfigs.join(", ")}`);
   return lines.join("\n");
