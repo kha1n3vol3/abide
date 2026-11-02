@@ -82,7 +82,7 @@ export const readBeadsMemories = (root: string): BeadsMemory[] => {
       "BEADS_UNAVAILABLE",
       "Live import needs an existing .beads workspace and bd on PATH",
     );
-  const result = spawnSync(executable, ["-C", root, "--readonly", "memories", "--json"], {
+  const result = spawnSync(executable, ["--readonly", "memories", "--json"], {
     cwd: root,
     env: { ...process.env, BEADS_DOLT_AUTO_START: "0" },
     stdio: ["ignore", "pipe", "pipe"],

@@ -108,7 +108,7 @@ process.stdout.write(JSON.stringify({rule:"Keep it simple",schema_version:1}));`
       .object({ args: z.array(z.string()), cwd: z.string(), auto: z.string() })
       .parse(JSON.parse(readFileSync(path.join(root, "call.json"), "utf8"))),
   ).toEqual({
-    args: ["-C", root, "--readonly", "memories", "--json"],
+    args: ["--readonly", "memories", "--json"],
     cwd: root,
     auto: "0",
   });
